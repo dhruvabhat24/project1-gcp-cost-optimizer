@@ -1,0 +1,177 @@
+# ============================================================
+# Kubernetes Cost Optimizer - Git Ignore
+# ============================================================
+
+
+# ============================================================
+# Python
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+
+# ============================================================
+# Environment Variables & Secrets
+# ============================================================
+
+.env
+.env.*
+!.env.example
+
+# Google Cloud credentials
+service-account*.json
+gcp-credentials*.json
+*-service-account.json
+credentials*.json
+
+# Local configuration files
+config.local.py
+config.dev.py
+config.prod.py
+
+
+# ============================================================
+# Reports & Runtime Output
+# ============================================================
+
+# Generated optimization reports
+reports/*
+!reports/.gitkeep
+
+# Application logs
+logs/*
+!logs/.gitkeep
+
+*.log
+
+
+# ============================================================
+# Testing & Coverage
+# ============================================================
+
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+.pyright/
+
+# Ruff
+.ruff_cache/
+
+
+# ============================================================
+# IDE / Editors
+# ============================================================
+
+.vscode/
+.idea/
+
+# VS Code workspace files
+*.code-workspace
+
+
+# ============================================================
+# Windows
+# ============================================================
+
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Temporary Windows files
+*.tmp
+*.temp
+*.bak
+
+
+# ============================================================
+# Temporary / Editor Files
+# ============================================================
+
+*.swp
+*.swo
+*.pid
+*.pid.lock
+*.orig
+
+
+# ============================================================
+# Kubernetes / Local Cluster
+# ============================================================
+
+# Local kubeconfig files
+*.kubeconfig
+
+# Minikube local configuration
+.minikube/
+
+# Kubernetes secrets accidentally created locally
+k8s/secrets/
+k8s/*.secret.yaml
+
+
+# ============================================================
+# Terraform - Future Infrastructure Automation
+# ============================================================
+
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+
+# Keep Terraform lock file if we add Terraform later.
+# .terraform.lock.hcl is intentionally NOT ignored.
+
+
+# ============================================================
+# Jupyter
+# ============================================================
+
+.ipynb_checkpoints/
+
+
+# ============================================================
+# Node.js - Future Dashboard
+# ============================================================
+
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+
+# ============================================================
+# OS Files
+# ============================================================
+
+.DS_Store
+
+
+# ============================================================
+# Local GCP / Cloud SDK Files
+# ============================================================
+
+.gcloud/
+.google-cloud/
