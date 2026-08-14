@@ -81,12 +81,19 @@ class PrometheusMetricsAnalyzer:
 
             return True
 
-        except Exception as exc:
-            self.logger.warning(
-                "Kubernetes API unavailable: %s",
+        except ConfigException as exc:
+            self.logger.error(
+                "Failed to load Kubernetes configuration: %s",
                 exc,
             )
+            self.k8s_api = None
+            return False
 
+        except Exception as exc:
+            self.logger.exception(
+                "Unexpected error while connecting to Kubernetes: %s",
+                exc,
+            )
             self.k8s_api = None
             return False
 
@@ -361,12 +368,20 @@ class PrometheusMetricsAnalyzer:
     @staticmethod
     def _parse_cpu(value: str) -> float:
         """Convert Kubernetes CPU quantity into CPU cores."""
-        value = str(value)
+        try:
+            value = str(value).strip()
 
-        if value.endswith("m"):
-            return float(value[:-1]) / 1000
+            if value.endswith("m"):
+                return float(value[:-1]) / 1000
 
-        return float(value)
+            return float(value)
+
+        except (TypeError, ValueError):
+            logger.error(
+                "Invalid Kubernetes CPU quantity: %r",
+                value,
+            )
+            return 0.0
 
     @staticmethod
     def _parse_memory(value: str) -> float:

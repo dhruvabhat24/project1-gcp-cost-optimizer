@@ -133,6 +133,11 @@ COST_THRESHOLD: float = float(
     )
 )
 
+if not 0 < COST_THRESHOLD <= 1:
+    raise ValueError(
+        "COST_THRESHOLD must be between 0 and 1"
+    )
+
 # Demonstration estimates used by the optimization engine.
 #
 # These values are NOT official GCP prices.
@@ -143,12 +148,22 @@ MONTHLY_COST_PER_CPU: float = float(
     )
 )
 
+if MONTHLY_COST_PER_CPU < 0:
+    raise ValueError(
+        "MONTHLY_COST_PER_CPU cannot be negative"
+    )
+
 MONTHLY_COST_PER_GB_MEMORY: float = float(
     os.getenv(
         "MONTHLY_COST_PER_GB_MEMORY",
         "3.50",
     )
 )
+
+if MONTHLY_COST_PER_GB_MEMORY < 0:
+    raise ValueError(
+        "MONTHLY_COST_PER_GB_MEMORY cannot be negative"
+    )
 
 # Estimated discount for interruptible batch workloads.
 SPOT_DISCOUNT_PERCENT: float = float(
@@ -157,6 +172,11 @@ SPOT_DISCOUNT_PERCENT: float = float(
         "60.0",
     )
 )
+
+if not 0 <= SPOT_DISCOUNT_PERCENT <= 100:
+    raise ValueError(
+        "SPOT_DISCOUNT_PERCENT must be between 0 and 100"
+    )
 
 # Usage below this ratio can be considered effectively unused.
 UNUSED_USAGE_THRESHOLD: float = float(

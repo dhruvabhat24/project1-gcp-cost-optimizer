@@ -155,8 +155,8 @@ class ActionExecutor:
         )
 
     def execute_recommendation(
-        self,
-        recommendation: Dict[str, Any],
+    self,
+    recommendation: Dict[str, Any],
     ) -> bool:
         """Execute a recommendation safely.
 
@@ -166,44 +166,62 @@ class ActionExecutor:
         Returns:
             bool: True when successfully processed.
         """
-        namespace = recommendation.get(
-            "namespace",
-            "default",
-        )
+        try:
+            namespace = recommendation.get(
+                "namespace",
+                "default",
+            )
 
-        pod_name = recommendation.get(
-            "pod_name",
-            "",
-        )
+            pod_name = recommendation.get(
+                "pod_name",
+                "",
+            )
 
-        if namespace in self.PROTECTED_NAMESPACES:
-            self.logger.warning(
-                "Skipping protected pod %s/%s",
+            if namespace in self.PROTECTED_NAMESPACES:
+                self.logger.warning(
+                    "Skipping protected pod %s/%s",
+                    namespace,
+                    pod_name,
+                )
+                return False
+
+            cpu = recommendation.get(
+                "actual_cpu_cores",
+                0.0,
+            )
+
+            memory = recommendation.get(
+                "actual_memory_gb",
+                0.0,
+            )
+
+            cpu_value = f"{max(float(cpu) * 1.5, 0.01):.3f}"
+
+            memory_value = f"{max(float(memory) * 1.5, 0.01):.3f}Gi"
+
+            return self.update_resource_limits(
+                namespace=namespace,
+                deployment=pod_name,
+                cpu=cpu_value,
+                memory=memory_value,
+            )
+
+        except (TypeError, ValueError) as exc:
+            self.logger.error(
+                "Invalid recommendation data for %s/%s: %s",
+                namespace,
+                pod_name,
+                exc,
+            )
+            return False
+
+        except Exception:
+            self.logger.exception(
+                "Unexpected error while executing recommendation for %s/%s",
                 namespace,
                 pod_name,
             )
             return False
-
-        cpu = recommendation.get(
-            "actual_cpu_cores",
-            0.0,
-        )
-
-        memory = recommendation.get(
-            "actual_memory_gb",
-            0.0,
-        )
-
-        cpu_value = f"{max(float(cpu) * 1.5, 0.01):.3f}"
-
-        memory_value = f"{max(float(memory) * 1.5, 0.01):.3f}Gi"
-
-        return self.update_resource_limits(
-            namespace=namespace,
-            deployment=pod_name,
-            cpu=cpu_value,
-            memory=memory_value,
-        )
 
     def log_action(
         self,

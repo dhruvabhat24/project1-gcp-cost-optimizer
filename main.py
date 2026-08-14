@@ -88,11 +88,19 @@ def save_reports(report: Dict[str, Any]) -> None:
     json_path: Path = config.REPORTS_DIR / f"report_{timestamp}.json"
     text_path: Path = config.REPORTS_DIR / f"report_{timestamp}.txt"
 
-    with json_path.open("w", encoding="utf-8") as json_file:
-        json.dump(report, json_file, indent=2)
+    try:
+        with json_path.open("w", encoding="utf-8") as json_file:
+            json.dump(report, json_file, indent=2)
+    except OSError as exc:
+        logging.error("Failed to save JSON report: %s", exc)
+        return
 
-    with text_path.open("w", encoding="utf-8") as text_file:
-        text_file.write(report["text"])
+    try:
+        with text_path.open("w", encoding="utf-8") as text_file:
+            text_file.write(report["text"])
+    except OSError as exc:
+        logging.error("Failed to save text report: %s", exc)
+        return
 
     logging.info("JSON report saved to %s", json_path)
     logging.info("Text report saved to %s", text_path)
