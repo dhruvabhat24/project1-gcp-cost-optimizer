@@ -1,0 +1,62 @@
+name: Kubernetes Cost Optimizer
+
+on:
+  push:
+    branches:
+      - main
+
+  schedule:
+    - cron: "0 2 * * *"
+
+  workflow_dispatch:
+
+jobs:
+  cost-analysis:
+    name: Analyze Kubernetes Costs
+    runs-on: ubuntu-latest
+
+    env:
+      USE_MOCK_DATA: "true"
+      DEBUG_MODE: "true"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+          cache: pip
+
+      - name: Install dependencies
+        working-directory: project1-gcp-cost-optimizer
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run analysis
+        working-directory: project1-gcp-cost-optimizer
+        run: |
+          python main.py --analyze
+
+      - name: Generate dry-run report
+        working-directory: project1-gcp-cost-optimizer
+        run: |
+          python main.py --dry-run
+
+      - name: Upload optimization reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: kubernetes-cost-optimizer-report
+          path: project1-gcp-cost-optimizer/reports/
+          if-no-files-found: warn
+
+      - name: Optional Slack notification
+        if: ${{ env.SLACK_WEBHOOK_URL != '' }}
+        working-directory: project1-gcp-cost-optimizer
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          python -c "print('Slack notification hook configured')"

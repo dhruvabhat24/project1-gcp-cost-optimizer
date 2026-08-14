@@ -1,0 +1,238 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+  namespace: default
+  labels:
+    app: web-app
+    tier: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+        tier: frontend
+    spec:
+      containers:
+        - name: web-app
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "2Gi"
+            limits:
+              cpu: "1500m"
+              memory: "2Gi"
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-service
+  namespace: default
+  labels:
+    app: api-service
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-service
+  template:
+    metadata:
+      labels:
+        app: api-service
+        tier: backend
+    spec:
+      containers:
+        - name: api-service
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "1Gi"
+            limits:
+              cpu: "1500m"
+              memory: "2Gi"
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: optimized-service
+  namespace: default
+  labels:
+    app: optimized-service
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: optimized-service
+  template:
+    metadata:
+      labels:
+        app: optimized-service
+        tier: backend
+    spec:
+      containers:
+        - name: optimized-service
+          image: nginx:latest
+          ports:
+            - containerPort: 80
+
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "50Mi"
+            limits:
+              cpu: "100m"
+              memory: "100Mi"
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: high-cpu-app
+  namespace: default
+  labels:
+    app: high-cpu-app
+    tier: compute
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: high-cpu-app
+  template:
+    metadata:
+      labels:
+        app: high-cpu-app
+        tier: compute
+    spec:
+      containers:
+        - name: high-cpu-app
+          image: busybox:latest
+
+          command:
+            - /bin/sh
+            - -c
+            - |
+              while true; do
+                for i in $(seq 1 100000); do
+                  echo $((i * i)) > /dev/null
+                done
+                sleep 2
+              done
+
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "500Mi"
+            limits:
+              cpu: "750m"
+              memory: "750Mi"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: batch-worker
+  namespace: default
+  labels:
+    app: batch-worker
+    tier: batch
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: batch-worker
+  template:
+    metadata:
+      labels:
+        app: batch-worker
+        tier: batch
+    spec:
+      containers:
+        - name: batch-worker
+          image: busybox:latest
+
+          command:
+            - /bin/sh
+            - -c
+            - |
+              while true; do
+                dd if=/dev/zero of=/tmp/testfile bs=1M count=200 \
+                  2>/dev/null
+                sleep 30
+                rm -f /tmp/testfile
+                sleep 30
+              done
+
+          resources:
+            requests:
+              cpu: "1000m"
+              memory: "2Gi"
+            limits:
+              cpu: "2000m"
+              memory: "2Gi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-app
+  namespace: default
+spec:
+  selector:
+    app: web-app
+  ports:
+    - port: 80
+      targetPort: 80
