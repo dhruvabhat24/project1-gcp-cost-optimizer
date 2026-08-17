@@ -11,7 +11,7 @@ import logging
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class ActionExecutor:
@@ -39,23 +39,9 @@ class ActionExecutor:
         deployment: str,
         replicas: int,
     ) -> bool:
-        """Scale a Kubernetes deployment.
-
-        Args:
-            namespace: Kubernetes namespace.
-            deployment: Deployment name.
-            replicas: Desired replica count.
-
-        Returns:
-            bool: True when the action succeeds or is simulated.
-
-        Raises:
-            ValueError: If replicas is invalid.
-        """
+        """Scale a Kubernetes deployment."""
         if replicas < 1:
-            raise ValueError(
-                "Replica count must be at least 1"
-            )
+            raise ValueError("Replica count must be at least 1")
 
         if namespace in self.PROTECTED_NAMESPACES:
             self.logger.warning(
@@ -89,17 +75,7 @@ class ActionExecutor:
         cpu: str,
         memory: str,
     ) -> bool:
-        """Patch a deployment's container resource requests.
-
-        Args:
-            namespace: Kubernetes namespace.
-            deployment: Deployment name.
-            cpu: New CPU request.
-            memory: New memory request.
-
-        Returns:
-            bool: True when successful or simulated.
-        """
+        """Patch a deployment's CPU and memory resources."""
         if namespace in self.PROTECTED_NAMESPACES:
             self.logger.warning(
                 "Refusing to modify protected namespace: %s",
@@ -154,18 +130,134 @@ class ActionExecutor:
             },
         )
 
+    def _resolve_deployment_name(
+        self,
+        namespace: str,
+        pod_name: str,
+    ) -> Optional[str]:
+        """Resolve a Pod to its owning Deployment.
+
+        Kubernetes ownership hierarchy:
+
+            Pod -> ReplicaSet -> Deployment
+        """
+        if not pod_name:
+            self.logger.warning(
+                "Cannot resolve deployment because pod name is empty."
+            )
+            return None
+
+        if namespace in self.PROTECTED_NAMESPACES:
+            self.logger.warning(
+                "Refusing to resolve resources in protected namespace: %s",
+                namespace,
+            )
+            return None
+
+        try:
+            pod_result = subprocess.run(
+                [
+                    "kubectl",
+                    "get",
+                    "pod",
+                    pod_name,
+                    "-n",
+                    namespace,
+                    "-o",
+                    "jsonpath={.metadata.ownerReferences[0].name}",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            replicaset_name = pod_result.stdout.strip()
+
+            if not replicaset_name:
+                self.logger.warning(
+                    "No ReplicaSet owner found for pod %s/%s",
+                    namespace,
+                    pod_name,
+                )
+                return None
+
+            self.logger.info(
+                "Resolved pod %s/%s -> ReplicaSet %s",
+                namespace,
+                pod_name,
+                replicaset_name,
+            )
+
+            deployment_result = subprocess.run(
+                [
+                    "kubectl",
+                    "get",
+                    "replicaset",
+                    replicaset_name,
+                    "-n",
+                    namespace,
+                    "-o",
+                    "jsonpath={.metadata.ownerReferences[0].name}",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            deployment_name = deployment_result.stdout.strip()
+
+            if not deployment_name:
+                self.logger.warning(
+                    "No Deployment owner found for ReplicaSet %s/%s",
+                    namespace,
+                    replicaset_name,
+                )
+                return None
+
+            self.logger.info(
+                "Resolved ReplicaSet %s/%s -> Deployment %s",
+                namespace,
+                replicaset_name,
+                deployment_name,
+            )
+
+            return deployment_name
+
+        except subprocess.CalledProcessError as exc:
+            self.logger.error(
+                "kubectl failed while resolving deployment for "
+                "pod %s/%s: %s",
+                namespace,
+                pod_name,
+                exc,
+            )
+            return None
+
+        except subprocess.TimeoutExpired as exc:
+            self.logger.error(
+                "Timeout while resolving deployment for pod %s/%s: %s",
+                namespace,
+                pod_name,
+                exc,
+            )
+            return None
+
+        except OSError as exc:
+            self.logger.error(
+                "Unable to execute kubectl while resolving pod %s/%s: %s",
+                namespace,
+                pod_name,
+                exc,
+            )
+            return None
+
     def execute_recommendation(
         self,
         recommendation: Dict[str, Any],
     ) -> bool:
-        """Execute a recommendation safely.
-
-        Args:
-            recommendation: Optimization recommendation.
-
-        Returns:
-            bool: True when successfully processed.
-        """
+        """Execute a recommendation safely."""
         namespace = recommendation.get(
             "namespace",
             "default",
@@ -184,6 +276,12 @@ class ActionExecutor:
             )
             return False
 
+        if not pod_name:
+            self.logger.warning(
+                "Skipping recommendation because pod name is missing."
+            )
+            return False
+
         cpu = recommendation.get(
             "actual_cpu_cores",
             0.0,
@@ -194,13 +292,44 @@ class ActionExecutor:
             0.0,
         )
 
-        cpu_value = f"{max(float(cpu) * 1.5, 0.01):.3f}"
+        try:
+            cpu_value = f"{max(float(cpu) * 1.5, 0.01):.3f}"
+            memory_value = (
+                f"{max(float(memory) * 1.5, 0.01):.3f}Gi"
+            )
+        except (TypeError, ValueError) as exc:
+            self.logger.error(
+                "Invalid resource values for %s/%s: %s",
+                namespace,
+                pod_name,
+                exc,
+            )
+            return False
 
-        memory_value = f"{max(float(memory) * 1.5, 0.01):.3f}Gi"
+        deployment = self._resolve_deployment_name(
+            namespace=namespace,
+            pod_name=pod_name,
+        )
+
+        if not deployment:
+            self.logger.warning(
+                "Skipping recommendation because deployment "
+                "could not be resolved for pod %s/%s",
+                namespace,
+                pod_name,
+            )
+            return False
+
+        self.logger.info(
+            "Executing recommendation for %s/%s via deployment %s",
+            namespace,
+            pod_name,
+            deployment,
+        )
 
         return self.update_resource_limits(
             namespace=namespace,
-            deployment=pod_name,
+            deployment=deployment,
             cpu=cpu_value,
             memory=memory_value,
         )
@@ -213,15 +342,7 @@ class ActionExecutor:
         new_value: Any,
         action: str,
     ) -> None:
-        """Record an executed or simulated action.
-
-        Args:
-            namespace: Kubernetes namespace.
-            resource: Kubernetes resource.
-            old_value: Previous resource value.
-            new_value: New value.
-            action: Action type.
-        """
+        """Record an executed or simulated action."""
         entry = {
             "timestamp": datetime.now(
                 timezone.utc
@@ -246,15 +367,7 @@ class ActionExecutor:
         report_text: str,
         reports_dir: Path,
     ) -> Path:
-        """Save the weekly report.
-
-        Args:
-            report_text: Human-readable report.
-            reports_dir: Destination directory.
-
-        Returns:
-            Path: Written report path.
-        """
+        """Save the weekly report and action audit."""
         reports_dir.mkdir(
             parents=True,
             exist_ok=True,
@@ -282,24 +395,24 @@ class ActionExecutor:
             path,
         )
 
+        self.logger.info(
+            "Action audit written to %s",
+            audit_path,
+        )
+
         return path
 
     def generate_report_text(
         self,
         recommendations: List[Dict[str, Any]],
     ) -> str:
-        """Generate a concise savings summary.
-
-        Args:
-            recommendations: Optimization recommendations.
-
-        Returns:
-            str: Human-readable summary.
-        """
+        """Generate a concise savings summary."""
         total = sum(
-            item.get(
-                "estimated_monthly_savings_inr",
-                0,
+            float(
+                item.get(
+                    "estimated_monthly_savings_inr",
+                    0,
+                )
             )
             for item in recommendations
         )
@@ -314,9 +427,11 @@ class ActionExecutor:
 
         for item in recommendations:
             lines.append(
-                f"- {item['namespace']}/{item['pod_name']}: "
+                f"- {item['namespace']}/"
+                f"{item['pod_name']}: "
                 f"{item['suggested_action']} | "
-                f"₹{item['estimated_monthly_savings_inr']:,.2f}/month"
+                f"₹{float(item['estimated_monthly_savings_inr']):,.2f}"
+                f"/month"
             )
 
         return "\n".join(lines)
@@ -329,18 +444,7 @@ class ActionExecutor:
         action: str,
         new_value: Any,
     ) -> bool:
-        """Execute or simulate a kubectl command.
-
-        Args:
-            command: kubectl command arguments.
-            namespace: Kubernetes namespace.
-            resource: Resource name.
-            action: Action identifier.
-            new_value: New resource value.
-
-        Returns:
-            bool: True when successful.
-        """
+        """Execute or simulate a kubectl command."""
         command_string = " ".join(command)
 
         self.logger.info(
@@ -349,7 +453,9 @@ class ActionExecutor:
         )
 
         if self.dry_run:
-            print(f"[DRY-RUN] Would execute: {command_string}")
+            print(
+                f"[DRY-RUN] Would execute: {command_string}"
+            )
 
             self.log_action(
                 namespace=namespace,
@@ -383,16 +489,32 @@ class ActionExecutor:
                 result.stdout.strip(),
             )
 
+            if result.stderr.strip():
+                self.logger.debug(
+                    "kubectl stderr: %s",
+                    result.stderr.strip(),
+                )
+
             return True
 
-        except (
-            subprocess.CalledProcessError,
-            subprocess.TimeoutExpired,
-            OSError,
-        ) as exc:
-            self.logger.exception(
-                "kubectl execution failed: %s",
+        except subprocess.CalledProcessError as exc:
+            self.logger.error(
+                "kubectl execution failed with exit code %s: %s",
+                exc.returncode,
+                exc.stderr.strip() if exc.stderr else str(exc),
+            )
+            return False
+
+        except subprocess.TimeoutExpired as exc:
+            self.logger.error(
+                "kubectl command timed out: %s",
                 exc,
             )
+            return False
 
+        except OSError as exc:
+            self.logger.error(
+                "Unable to execute kubectl: %s",
+                exc,
+            )
             return False

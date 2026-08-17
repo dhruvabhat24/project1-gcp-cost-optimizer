@@ -1,5 +1,9 @@
 """
 Prometheus and Kubernetes metrics analysis module.
+
+This module collects actual CPU/memory utilization from Prometheus,
+retrieves Kubernetes resource requests, calculates utilization
+percentages, and identifies over-provisioned workloads.
 """
 
 import logging
@@ -34,9 +38,7 @@ class PrometheusMetricsAnalyzer:
                 timeout=5,
             )
 
-            self.prometheus_available = (
-                response.status_code == 200
-            )
+            self.prometheus_available = response.status_code == 200
 
             if self.prometheus_available:
                 self.logger.info(
@@ -115,15 +117,15 @@ class PrometheusMetricsAnalyzer:
 
             if payload.get("status") != "success":
                 raise RuntimeError(
-                    payload.get("error", "Prometheus query failed")
+                    payload.get(
+                        "error",
+                        "Prometheus query failed",
+                    )
                 )
 
-            return payload.get(
-                "data",
-                {},
-            ).get(
-                "result",
-                [],
+            return (
+                payload.get("data", {})
+                .get("result", [])
             )
 
         except Exception as exc:
@@ -134,11 +136,14 @@ class PrometheusMetricsAnalyzer:
 
             return []
 
-    def get_pod_resource_usage(self) -> Dict[str, Dict[str, float]]:
-        """Retrieve CPU and memory usage for Kubernetes pods.
+    def get_pod_resource_usage(
+        self,
+    ) -> Dict[str, Dict[str, float]]:
+        """Retrieve CPU and memory usage for configured namespace pods.
 
         Returns:
-            Dict[str, Dict[str, float]]: Pod usage indexed by namespace/name.
+            Dict[str, Dict[str, float]]:
+                Pod usage indexed by namespace/name.
         """
         if not self.prometheus_available:
             self.logger.info(
@@ -146,16 +151,25 @@ class PrometheusMetricsAnalyzer:
             )
             return self._mock_usage()
 
+        namespace = config.KUBERNETES_NAMESPACE
+
         cpu_query = (
-            'sum by (namespace,pod) '
-            '(rate(container_cpu_usage_seconds_total'
-            '{container!="",container!="POD"}[5m]))'
+            "sum by (namespace,pod) "
+            "("
+            "rate("
+            "container_cpu_usage_seconds_total"
+            f'{{namespace="{namespace}",container!="",container!="POD"}}'
+            "[5m]"
+            ")"
+            ")"
         )
 
         memory_query = (
-            'sum by (namespace,pod) '
-            '(container_memory_working_set_bytes'
-            '{container!="",container!="POD"})'
+            "sum by (namespace,pod) "
+            "("
+            "container_memory_working_set_bytes"
+            f'{{namespace="{namespace}",container!="",container!="POD"}}'
+            ")"
         )
 
         cpu_results = self._query_prometheus(cpu_query)
@@ -171,7 +185,12 @@ class PrometheusMetricsAnalyzer:
                 usage.setdefault(key, {})["cpu"] = float(
                     result["value"][1]
                 )
-            except (KeyError, ValueError, TypeError, IndexError):
+            except (
+                KeyError,
+                ValueError,
+                TypeError,
+                IndexError,
+            ):
                 continue
 
         for result in memory_results:
@@ -180,9 +199,17 @@ class PrometheusMetricsAnalyzer:
 
             try:
                 usage.setdefault(key, {})["memory"] = (
-                    float(result["value"][1]) / 1024 / 1024 / 1024
+                    float(result["value"][1])
+                    / 1024
+                    / 1024
+                    / 1024
                 )
-            except (KeyError, ValueError, TypeError, IndexError):
+            except (
+                KeyError,
+                ValueError,
+                TypeError,
+                IndexError,
+            ):
                 continue
 
         if not usage:
@@ -192,6 +219,13 @@ class PrometheusMetricsAnalyzer:
             )
             return self._mock_usage()
 
+        self.logger.info(
+            "Collected Prometheus usage for %d pods "
+            "in namespace '%s'",
+            len(usage),
+            namespace,
+        )
+
         return usage
 
     def get_pod_resource_requests(
@@ -199,8 +233,11 @@ class PrometheusMetricsAnalyzer:
     ) -> Dict[str, Dict[str, float]]:
         """Retrieve Kubernetes resource requests.
 
+        Only pods in the configured namespace are included.
+
         Returns:
-            Dict[str, Dict[str, float]]: Requested CPU and memory.
+            Dict[str, Dict[str, float]]:
+                Requested CPU and memory.
 
         Raises:
             RuntimeError: If Kubernetes cannot be accessed and no mock
@@ -213,12 +250,18 @@ class PrometheusMetricsAnalyzer:
             return self._mock_requests()
 
         try:
-            pods = self.k8s_api.list_pod_for_all_namespaces()
+            namespace = config.KUBERNETES_NAMESPACE
+
+            pods = self.k8s_api.list_namespaced_pod(
+                namespace=namespace
+            )
 
             requests_data: Dict[str, Dict[str, float]] = {}
 
             for pod in pods.items:
-                namespace = pod.metadata.namespace or "default"
+                pod_namespace = (
+                    pod.metadata.namespace or namespace
+                )
                 name = pod.metadata.name
 
                 cpu = 0.0
@@ -234,19 +277,32 @@ class PrometheusMetricsAnalyzer:
                         continue
 
                     cpu += self._parse_cpu(
-                        resources.requests.get("cpu", "0")
+                        resources.requests.get(
+                            "cpu",
+                            "0",
+                        )
                     )
 
                     memory += self._parse_memory(
-                        resources.requests.get("memory", "0")
+                        resources.requests.get(
+                            "memory",
+                            "0",
+                        )
                     )
 
                 requests_data[
-                    f"{namespace}/{name}"
+                    f"{pod_namespace}/{name}"
                 ] = {
                     "cpu": cpu,
                     "memory": memory,
                 }
+
+            self.logger.info(
+                "Collected Kubernetes resource requests "
+                "for %d pods in namespace '%s'",
+                len(requests_data),
+                namespace,
+            )
 
             return requests_data
 
@@ -255,6 +311,7 @@ class PrometheusMetricsAnalyzer:
                 "Failed to retrieve Kubernetes requests: %s",
                 exc,
             )
+
             return self._mock_requests()
 
     def calculate_utilization_percent(
@@ -269,14 +326,18 @@ class PrometheusMetricsAnalyzer:
             requests: Kubernetes resource requests.
 
         Returns:
-            Dict[str, Dict[str, Any]]: Combined utilization data.
+            Dict[str, Dict[str, Any]]:
+                Combined utilization data.
         """
         results: Dict[str, Dict[str, Any]] = {}
 
         for pod_key, request in requests.items():
             actual = usage.get(
                 pod_key,
-                {"cpu": 0.0, "memory": 0.0},
+                {
+                    "cpu": 0.0,
+                    "memory": 0.0,
+                },
             )
 
             cpu_request = request.get("cpu", 0.0)
@@ -306,7 +367,10 @@ class PrometheusMetricsAnalyzer:
                 "memory_request": memory_request,
                 "cpu_usage": cpu_usage,
                 "memory_usage": memory_usage,
-                "cpu_utilization_percent": round(cpu_percent, 2),
+                "cpu_utilization_percent": round(
+                    cpu_percent,
+                    2,
+                ),
                 "memory_utilization_percent": round(
                     memory_percent,
                     2,
@@ -329,13 +393,22 @@ class PrometheusMetricsAnalyzer:
             utilization: Calculated pod utilization.
 
         Returns:
-            List[Dict[str, Any]]: Optimization opportunities.
+            List[Dict[str, Any]]:
+                Optimization opportunities.
         """
         opportunities: List[Dict[str, Any]] = []
 
         for pod in utilization.values():
-            cpu_ratio = pod["cpu_utilization_percent"] / 100
-            memory_ratio = pod["memory_utilization_percent"] / 100
+            if pod.get("namespace") != config.KUBERNETES_NAMESPACE:
+                continue
+
+            cpu_ratio = (
+                pod["cpu_utilization_percent"] / 100
+            )
+
+            memory_ratio = (
+                pod["memory_utilization_percent"] / 100
+            )
 
             if (
                 cpu_ratio < config.COST_THRESHOLD
@@ -344,23 +417,51 @@ class PrometheusMetricsAnalyzer:
                 opportunities.append(
                     {
                         **pod,
-                        "reason": "Resource utilization below 30%",
+                        "reason": (
+                            "Resource utilization below "
+                            f"{config.COST_THRESHOLD * 100:.0f}%"
+                        ),
                     }
                 )
+
+        self.logger.info(
+            "Identified %d over-provisioned pods "
+            "in namespace '%s'",
+            len(opportunities),
+            config.KUBERNETES_NAMESPACE,
+        )
 
         return opportunities
 
     @staticmethod
-    def _pod_key(metric: Dict[str, str]) -> str:
-        """Build namespace/pod key from Prometheus labels."""
+    def _pod_key(
+        metric: Dict[str, str],
+    ) -> str:
+        """Build namespace/pod key from Prometheus labels.
+
+        Args:
+            metric: Prometheus metric labels.
+
+        Returns:
+            str: Namespace/pod identifier.
+        """
         return (
             f'{metric.get("namespace", "default")}/'
             f'{metric.get("pod", "unknown")}'
         )
 
     @staticmethod
-    def _parse_cpu(value: str) -> float:
-        """Convert Kubernetes CPU quantity into CPU cores."""
+    def _parse_cpu(
+        value: str,
+    ) -> float:
+        """Convert Kubernetes CPU quantity into CPU cores.
+
+        Args:
+            value: Kubernetes CPU quantity.
+
+        Returns:
+            float: CPU cores.
+        """
         value = str(value)
 
         if value.endswith("m"):
@@ -369,8 +470,17 @@ class PrometheusMetricsAnalyzer:
         return float(value)
 
     @staticmethod
-    def _parse_memory(value: str) -> float:
-        """Convert Kubernetes memory quantity into GiB."""
+    def _parse_memory(
+        value: str,
+    ) -> float:
+        """Convert Kubernetes memory quantity into GiB.
+
+        Args:
+            value: Kubernetes memory quantity.
+
+        Returns:
+            float: Memory in GiB.
+        """
         value = str(value)
 
         units = {
@@ -396,8 +506,15 @@ class PrometheusMetricsAnalyzer:
 
         return float(value) / 1024 ** 3
 
-    def _mock_usage(self) -> Dict[str, Dict[str, float]]:
-        """Return demonstration resource usage."""
+    def _mock_usage(
+        self,
+    ) -> Dict[str, Dict[str, float]]:
+        """Return demonstration resource usage.
+
+        Returns:
+            Dict[str, Dict[str, float]]:
+                Mock CPU and memory usage.
+        """
         return {
             "default/web-app": {
                 "cpu": 0.10,
@@ -421,8 +538,15 @@ class PrometheusMetricsAnalyzer:
             },
         }
 
-    def _mock_requests(self) -> Dict[str, Dict[str, float]]:
-        """Return demonstration resource requests."""
+    def _mock_requests(
+        self,
+    ) -> Dict[str, Dict[str, float]]:
+        """Return demonstration resource requests.
+
+        Returns:
+            Dict[str, Dict[str, float]]:
+                Mock CPU and memory requests.
+        """
         return {
             "default/web-app": {
                 "cpu": 1.0,
@@ -452,7 +576,8 @@ class PrometheusMetricsAnalyzer:
         """Return complete mock utilization data for demo mode.
 
         Returns:
-            Dict[str, Dict[str, Any]]: Mock analysis data.
+            Dict[str, Dict[str, Any]]:
+                Mock analysis data.
         """
         return self.calculate_utilization_percent(
             self._mock_usage(),
